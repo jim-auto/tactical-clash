@@ -19,6 +19,28 @@ const COMMAND_DURATION = 9000;
 const FOCUS_DURATION = 6500;
 const COVER_POINT_OFFSET = 34;
 
+type PlayerLoadoutId = 'vanguard' | 'scout' | 'bulwark' | 'striker';
+
+interface PlayerLoadout {
+  id: PlayerLoadoutId;
+  key: string;
+  name: string;
+  note: string;
+  speed: number;
+  visionRange: number;
+  rifleRange: number;
+  rifleDamage: number;
+  rifleCooldownDuration: number;
+  bladeRange: number;
+  bladeDamage: number;
+  bladeCooldownDuration: number;
+  dashCooldownDuration: number;
+  maxShieldEnergy: number;
+  shieldDrainRate: number;
+  shieldRegenRate: number;
+  shieldMitigation: number;
+}
+
 const COLORS = {
   blue: 0x46d7ff,
   blueCore: 0xd7fbff,
@@ -68,7 +90,86 @@ const ALLY_OFFSETS = [
   new Phaser.Math.Vector2(-60, 72),
 ];
 
-type KeySet = Record<'W' | 'A' | 'S' | 'D' | 'SPACE' | 'SHIFT' | 'E' | 'Q' | 'F' | 'R', Phaser.Input.Keyboard.Key>;
+const PLAYER_LOADOUTS: PlayerLoadout[] = [
+  {
+    id: 'vanguard',
+    key: '1',
+    name: 'VANGUARD',
+    note: 'balanced rifle and shield',
+    speed: 178,
+    visionRange: 300,
+    rifleRange: 430,
+    rifleDamage: 20,
+    rifleCooldownDuration: 0.22,
+    bladeRange: 42,
+    bladeDamage: 46,
+    bladeCooldownDuration: 0.72,
+    dashCooldownDuration: 1.45,
+    maxShieldEnergy: 100,
+    shieldDrainRate: 28,
+    shieldRegenRate: 19,
+    shieldMitigation: 0.42,
+  },
+  {
+    id: 'scout',
+    key: '2',
+    name: 'SCOUT',
+    note: 'wide vision and fast dash',
+    speed: 205,
+    visionRange: 380,
+    rifleRange: 390,
+    rifleDamage: 17,
+    rifleCooldownDuration: 0.24,
+    bladeRange: 38,
+    bladeDamage: 34,
+    bladeCooldownDuration: 0.68,
+    dashCooldownDuration: 1.1,
+    maxShieldEnergy: 74,
+    shieldDrainRate: 34,
+    shieldRegenRate: 17,
+    shieldMitigation: 0.5,
+  },
+  {
+    id: 'bulwark',
+    key: '3',
+    name: 'BULWARK',
+    note: 'durable shield anchor',
+    speed: 150,
+    visionRange: 280,
+    rifleRange: 410,
+    rifleDamage: 18,
+    rifleCooldownDuration: 0.3,
+    bladeRange: 40,
+    bladeDamage: 42,
+    bladeCooldownDuration: 0.84,
+    dashCooldownDuration: 1.8,
+    maxShieldEnergy: 145,
+    shieldDrainRate: 21,
+    shieldRegenRate: 24,
+    shieldMitigation: 0.32,
+  },
+  {
+    id: 'striker',
+    key: '4',
+    name: 'STRIKER',
+    note: 'close assault blade',
+    speed: 192,
+    visionRange: 290,
+    rifleRange: 360,
+    rifleDamage: 15,
+    rifleCooldownDuration: 0.28,
+    bladeRange: 52,
+    bladeDamage: 66,
+    bladeCooldownDuration: 0.64,
+    dashCooldownDuration: 1.25,
+    maxShieldEnergy: 82,
+    shieldDrainRate: 32,
+    shieldRegenRate: 18,
+    shieldMitigation: 0.46,
+  },
+];
+
+type KeySet = Record<'W' | 'A' | 'S' | 'D' | 'SPACE' | 'SHIFT' | 'E' | 'Q' | 'F' | 'R' | 'ONE' | 'TWO' | 'THREE' | 'FOUR', Phaser.Input.Keyboard.Key>;
 
 type SquadCommand =
   | {
@@ -125,6 +226,7 @@ export class ArenaScene extends Phaser.Scene {
   private dashTimerById = new Map<string, number>();
   private squadCommand?: SquadCommand;
   private roundStats: RoundStats = this.createRoundStats();
+  private selectedLoadoutId: PlayerLoadoutId = 'vanguard';
 
   constructor() {
     super('ArenaScene');
@@ -132,7 +234,7 @@ export class ArenaScene extends Phaser.Scene {
 
   create() {
     this.input.mouse?.disableContextMenu();
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SPACE,SHIFT,E,Q,F,R') as KeySet;
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SPACE,SHIFT,E,Q,F,R,ONE,TWO,THREE,FOUR') as KeySet;
 
     this.ground = this.add.graphics().setDepth(0);
     this.visionLayer = this.add.graphics().setDepth(1);
@@ -170,6 +272,10 @@ export class ArenaScene extends Phaser.Scene {
   update(_: number, deltaMs: number) {
     const dt = Math.min(deltaMs / 1000, 0.033);
     this.elapsedMs += deltaMs;
+
+    if (this.handleLoadoutHotkeys()) {
+      return;
+    }
 
     if (Phaser.Input.Keyboard.JustDown(this.keys.R)) {
       this.resetRound();
@@ -279,6 +385,8 @@ export class ArenaScene extends Phaser.Scene {
   }): CombatUnit {
     const color = config.team === 'blue' ? COLORS.blue : COLORS.red;
     const core = config.team === 'blue' ? COLORS.blueCore : COLORS.redCore;
+    const loadout = this.getSelectedLoadout();
+    const isPlayer = config.kind === 'player';
     const root = this.add.container(config.x, config.y).setDepth(4);
     const shield = this.add.circle(0, 0, UNIT_RADIUS + 7, color, 0).setStrokeStyle(2, color, 0);
     const body = this.add.circle(0, 0, UNIT_RADIUS, color, 0.94).setStrokeStyle(2, 0xffffff, 0.08);
@@ -305,19 +413,31 @@ export class ArenaScene extends Phaser.Scene {
       id: config.id,
       team: config.team,
       kind: config.kind,
+      loadoutName: isPlayer ? loadout.name : config.team === 'blue' ? 'SUPPORT' : 'STANDARD',
       index: config.index,
       x: config.x,
       y: config.y,
       radius: UNIT_RADIUS,
       hp: 100,
       maxHp: 100,
-      shieldEnergy: 100,
-      maxShieldEnergy: 100,
+      shieldEnergy: isPlayer ? loadout.maxShieldEnergy : 100,
+      maxShieldEnergy: isPlayer ? loadout.maxShieldEnergy : 100,
       shieldActive: false,
-      speed: config.kind === 'player' ? 178 : 158,
+      shieldDrainRate: isPlayer ? loadout.shieldDrainRate : 28,
+      shieldRegenRate: isPlayer ? loadout.shieldRegenRate : 19,
+      shieldMitigation: isPlayer ? loadout.shieldMitigation : 0.42,
+      visionRange: isPlayer ? loadout.visionRange : VISION_RANGE,
+      speed: isPlayer ? loadout.speed : 158,
       facing: config.team === 'blue' ? 0 : Math.PI,
+      rifleRange: isPlayer ? loadout.rifleRange : RIFLE_RANGE,
+      rifleDamage: isPlayer ? loadout.rifleDamage : RIFLE_DAMAGE,
+      rifleCooldownDuration: isPlayer ? loadout.rifleCooldownDuration : 0.34,
       rifleCooldown: 0,
+      bladeRange: isPlayer ? loadout.bladeRange : BLADE_RANGE,
+      bladeDamage: isPlayer ? loadout.bladeDamage : BLADE_DAMAGE,
+      bladeCooldownDuration: isPlayer ? loadout.bladeCooldownDuration : 0.72,
       bladeCooldown: 0,
+      dashCooldownDuration: isPlayer ? loadout.dashCooldownDuration : 1.45,
       dashCooldown: 0,
       dashVx: 0,
       dashVy: 0,
@@ -361,14 +481,35 @@ export class ArenaScene extends Phaser.Scene {
       }
 
       if (unit.shieldActive) {
-        unit.shieldEnergy = Math.max(0, unit.shieldEnergy - 28 * dt);
+        unit.shieldEnergy = Math.max(0, unit.shieldEnergy - unit.shieldDrainRate * dt);
         if (unit.shieldEnergy <= 0) {
           unit.shieldActive = false;
         }
       } else {
-        unit.shieldEnergy = Math.min(unit.maxShieldEnergy, unit.shieldEnergy + 19 * dt);
+        unit.shieldEnergy = Math.min(unit.maxShieldEnergy, unit.shieldEnergy + unit.shieldRegenRate * dt);
       }
     }
+  }
+
+  private handleLoadoutHotkeys() {
+    const chosen =
+      Phaser.Input.Keyboard.JustDown(this.keys.ONE) ? 'vanguard' :
+      Phaser.Input.Keyboard.JustDown(this.keys.TWO) ? 'scout' :
+      Phaser.Input.Keyboard.JustDown(this.keys.THREE) ? 'bulwark' :
+      Phaser.Input.Keyboard.JustDown(this.keys.FOUR) ? 'striker' :
+      undefined;
+
+    if (!chosen) {
+      return false;
+    }
+
+    this.selectedLoadoutId = chosen;
+    this.resetRound();
+    const player = this.getPlayer();
+    if (player) {
+      this.addFloatingText(player.x, player.y - 42, player.loadoutName, COLORS.good);
+    }
+    return true;
   }
 
   private handlePlayer(dt: number) {
@@ -430,12 +571,12 @@ export class ArenaScene extends Phaser.Scene {
       if (target) {
         unit.facing = Phaser.Math.Angle.Between(unit.x, unit.y, target.x, target.y);
         const dist = Phaser.Math.Distance.Between(unit.x, unit.y, target.x, target.y);
-        const hasShot = this.hasLineOfSight(unit.x, unit.y, target.x, target.y, RIFLE_RANGE);
-        const close = dist <= BLADE_RANGE + 8;
+        const hasShot = this.hasLineOfSight(unit.x, unit.y, target.x, target.y, unit.rifleRange);
+        const close = dist <= unit.bladeRange + 8;
 
         unit.shieldActive = hasShot && dist < 260 && unit.shieldEnergy > 18 && (unit.hp < 62 || unit.rifleCooldown > 0.25);
 
-        if (hasShot && dist < RIFLE_RANGE && unit.rifleCooldown <= 0.08) {
+        if (hasShot && dist < unit.rifleRange && unit.rifleCooldown <= 0.08) {
           const pressure = unit.team === 'blue' ? 0.025 : 0.045;
           this.fireRifle(unit, unit.facing + Phaser.Math.FloatBetween(-pressure, pressure), unit.team === 'blue' ? 0.02 : 0.05);
         }
@@ -488,7 +629,7 @@ export class ArenaScene extends Phaser.Scene {
 
     const visibleEnemies = this.units
       .filter((candidate) => candidate.alive && candidate.team !== unit.team)
-      .filter((candidate) => this.hasLineOfSight(unit.x, unit.y, candidate.x, candidate.y, VISION_RANGE));
+      .filter((candidate) => this.hasLineOfSight(unit.x, unit.y, candidate.x, candidate.y, unit.visionRange));
 
     const target = this.pickTarget(unit, visibleEnemies);
     unit.targetId = target?.id;
@@ -588,8 +729,8 @@ export class ArenaScene extends Phaser.Scene {
       .map((point) => {
         const distanceFromUnit = Phaser.Math.Distance.Between(unit.x, unit.y, point.x, point.y);
         const distanceFromTarget = Phaser.Math.Distance.Between(target.x, target.y, point.x, point.y);
-        const targetCanShoot = this.hasLineOfSight(target.x, target.y, point.x, point.y, RIFLE_RANGE);
-        const canReturnFire = this.hasLineOfSight(point.x, point.y, target.x, target.y, RIFLE_RANGE);
+        const targetCanShoot = this.hasLineOfSight(target.x, target.y, point.x, point.y, target.rifleRange);
+        const canReturnFire = this.hasLineOfSight(point.x, point.y, target.x, target.y, unit.rifleRange);
         const hasSpacing = this.hasSquadSpacing(unit, point);
         const hidden = !targetCanShoot;
         const score =
@@ -607,7 +748,7 @@ export class ArenaScene extends Phaser.Scene {
           score,
         };
       })
-      .filter(({ distanceFromTarget }) => distanceFromTarget > 95 && distanceFromTarget < RIFLE_RANGE + 90);
+      .filter(({ distanceFromTarget }) => distanceFromTarget > 95 && distanceFromTarget < unit.rifleRange + 90);
 
     const hiddenCover = candidates
       .filter(({ hidden }) => hidden)
@@ -617,13 +758,13 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     const coveredAngle = candidates
-      .filter(({ canReturnFire, distanceFromTarget }) => canReturnFire && distanceFromTarget > 145 && distanceFromTarget < RIFLE_RANGE)
+      .filter(({ canReturnFire, distanceFromTarget }) => canReturnFire && distanceFromTarget > 145 && distanceFromTarget < unit.rifleRange)
       .sort((a, b) => a.score - b.score)[0];
     return coveredAngle?.point ?? hiddenCover?.point;
   }
 
   private shouldSeekCover(unit: CombatUnit, target: CombatUnit) {
-    const incoming = this.hasLineOfSight(target.x, target.y, unit.x, unit.y, RIFLE_RANGE);
+    const incoming = this.hasLineOfSight(target.x, target.y, unit.x, unit.y, target.rifleRange);
     if (!incoming) {
       return false;
     }
@@ -632,7 +773,7 @@ export class ArenaScene extends Phaser.Scene {
     const lowHp = unit.hp < 64;
     const weakShield = unit.shieldEnergy < 35 && unit.hp < 84;
     const caughtClose = distance < 125 && unit.dashCooldown > 0.35;
-    const recovering = unit.hp < 78 && unit.rifleCooldown > 0.22;
+    const recovering = unit.hp < 78 && unit.rifleCooldown > unit.rifleCooldownDuration * 0.65;
     return lowHp || weakShield || caughtClose || recovering;
   }
 
@@ -742,7 +883,7 @@ export class ArenaScene extends Phaser.Scene {
 
     unit.dashVx = dir.x * DASH_SPEED;
     unit.dashVy = dir.y * DASH_SPEED;
-    unit.dashCooldown = 1.45;
+    unit.dashCooldown = unit.dashCooldownDuration;
     this.dashTimerById.set(unit.id, DASH_TIME);
   }
 
@@ -751,13 +892,13 @@ export class ArenaScene extends Phaser.Scene {
       return;
     }
 
-    shooter.rifleCooldown = shooter.kind === 'player' ? 0.22 : 0.34;
+    shooter.rifleCooldown = shooter.rifleCooldownDuration;
     if (shooter.team === 'blue') {
       this.roundStats.shotsFired += 1;
     }
     const firedAngle = angle + Phaser.Math.FloatBetween(-miss, miss);
     const start = new Phaser.Math.Vector2(shooter.x + Math.cos(firedAngle) * (shooter.radius + 5), shooter.y + Math.sin(firedAngle) * (shooter.radius + 5));
-    const end = this.traceRay(start.x, start.y, firedAngle, RIFLE_RANGE);
+    const end = this.traceRay(start.x, start.y, firedAngle, shooter.rifleRange);
       const hit = this.findShotHit(shooter, start, end);
     const shotEnd = hit ? new Phaser.Math.Vector2(hit.x, hit.y) : end;
 
@@ -765,7 +906,7 @@ export class ArenaScene extends Phaser.Scene {
 
     if (hit) {
       const crossfire = this.hasCrossfire(shooter, hit);
-      const damage = RIFLE_DAMAGE + (crossfire ? 9 : 0);
+      const damage = shooter.rifleDamage + (crossfire ? 9 : 0);
       if (shooter.team === 'blue') {
         this.roundStats.rifleHits += 1;
         if (crossfire) {
@@ -786,7 +927,7 @@ export class ArenaScene extends Phaser.Scene {
         const along = Phaser.Math.Distance.Between(start.x, start.y, unit.x, unit.y);
         return { unit, distanceToLine, along };
       })
-      .filter(({ unit, distanceToLine }) => distanceToLine <= unit.radius + 5 && this.hasLineOfSight(start.x, start.y, unit.x, unit.y, RIFLE_RANGE))
+      .filter(({ unit, distanceToLine }) => distanceToLine <= unit.radius + 5 && this.hasLineOfSight(start.x, start.y, unit.x, unit.y, shooter.rifleRange))
       .sort((a, b) => a.along - b.along)[0]?.unit;
   }
 
@@ -794,13 +935,13 @@ export class ArenaScene extends Phaser.Scene {
     if (!attacker.alive || attacker.bladeCooldown > 0) {
       return;
     }
-    attacker.bladeCooldown = 0.72;
+    attacker.bladeCooldown = attacker.bladeCooldownDuration;
 
     const arcStart = attacker.facing - 0.72;
     const arcEnd = attacker.facing + 0.72;
     this.shotLayer.lineStyle(3, attacker.team === 'blue' ? COLORS.blueCore : COLORS.redCore, 0.68);
     this.shotLayer.beginPath();
-    this.shotLayer.arc(attacker.x, attacker.y, BLADE_RANGE, arcStart, arcEnd);
+    this.shotLayer.arc(attacker.x, attacker.y, attacker.bladeRange, arcStart, arcEnd);
     this.shotLayer.strokePath();
     this.time.delayedCall(110, () => this.shotLayer.clear());
 
@@ -811,8 +952,8 @@ export class ArenaScene extends Phaser.Scene {
       const dist = Phaser.Math.Distance.Between(attacker.x, attacker.y, target.x, target.y);
       const angle = Phaser.Math.Angle.Between(attacker.x, attacker.y, target.x, target.y);
       const diff = Math.abs(Phaser.Math.Angle.Wrap(angle - attacker.facing));
-      if (dist <= BLADE_RANGE + target.radius && diff <= 0.8 && this.hasLineOfSight(attacker.x, attacker.y, target.x, target.y, BLADE_RANGE + 20)) {
-        this.applyDamage(target, BLADE_DAMAGE, attacker, 'BLADE');
+      if (dist <= attacker.bladeRange + target.radius && diff <= 0.8 && this.hasLineOfSight(attacker.x, attacker.y, target.x, target.y, attacker.bladeRange + 20)) {
+        this.applyDamage(target, attacker.bladeDamage, attacker, 'BLADE');
       }
     }
   }
@@ -821,7 +962,7 @@ export class ArenaScene extends Phaser.Scene {
     const incomingAngle = Phaser.Math.Angle.Between(target.x, target.y, attacker.x, attacker.y);
     const frontDiff = Math.abs(Phaser.Math.Angle.Wrap(incomingAngle - target.facing));
     const shielded = target.shieldActive && target.shieldEnergy > 0 && frontDiff < 1.35;
-    const finalDamage = shielded ? amount * 0.42 : amount;
+    const finalDamage = shielded ? amount * target.shieldMitigation : amount;
 
     target.hp = Math.max(0, target.hp - finalDamage);
     target.lastHitAt = this.elapsedMs;
@@ -854,7 +995,7 @@ export class ArenaScene extends Phaser.Scene {
       if (!ally.alive || ally.team !== shooter.team || ally.id === shooter.id) {
         return false;
       }
-      if (!this.hasLineOfSight(ally.x, ally.y, target.x, target.y, VISION_RANGE)) {
+      if (!this.hasLineOfSight(ally.x, ally.y, target.x, target.y, ally.visionRange)) {
         return false;
       }
       const allyAngle = Phaser.Math.Angle.Between(target.x, target.y, ally.x, ally.y);
@@ -870,7 +1011,7 @@ export class ArenaScene extends Phaser.Scene {
         continue;
       }
 
-      const visible = blueUnits.some((ally) => this.hasLineOfSight(ally.x, ally.y, unit.x, unit.y, VISION_RANGE));
+      const visible = blueUnits.some((ally) => this.hasLineOfSight(ally.x, ally.y, unit.x, unit.y, ally.visionRange));
       unit.visibleToPlayer = visible;
       if (visible) {
         unit.lastSeenByPlayer = new Phaser.Math.Vector2(unit.x, unit.y);
@@ -904,9 +1045,9 @@ export class ArenaScene extends Phaser.Scene {
         continue;
       }
       this.visionLayer.fillStyle(COLORS.blue, unit.kind === 'player' ? 0.055 : 0.035);
-      this.visionLayer.fillCircle(unit.x, unit.y, VISION_RANGE);
+      this.visionLayer.fillCircle(unit.x, unit.y, unit.visionRange);
       this.visionLayer.lineStyle(1, COLORS.blue, unit.kind === 'player' ? 0.2 : 0.11);
-      this.visionLayer.strokeCircle(unit.x, unit.y, VISION_RANGE);
+      this.visionLayer.strokeCircle(unit.x, unit.y, unit.visionRange);
     }
   }
 
@@ -957,7 +1098,7 @@ export class ArenaScene extends Phaser.Scene {
       player.x + Math.cos(aim) * (player.radius + 8),
       player.y + Math.sin(aim) * (player.radius + 8),
     );
-    const end = this.traceRay(start.x, start.y, aim, RIFLE_RANGE);
+    const end = this.traceRay(start.x, start.y, aim, player.rifleRange);
     const hit = this.findShotHit(player, start, end, true);
     const canHit = Boolean(hit);
     const crossfire = hit ? this.hasCrossfire(player, hit) : false;
@@ -986,7 +1127,7 @@ export class ArenaScene extends Phaser.Scene {
       for (const ally of this.units.filter((unit) => unit.alive && unit.kind === 'ally')) {
         this.tacticalLayer.lineBetween(ally.x, ally.y, this.squadCommand.point.x, this.squadCommand.point.y);
       }
-      this.commandText.setText(`Q RALLY ACTIVE ${remaining}s    F MARK VISIBLE TARGET`);
+      this.commandText.setText(`Q RALLY ACTIVE ${remaining}s    F MARK VISIBLE TARGET\n${this.getLoadoutHint()}`);
     } else if (this.squadCommand?.kind === 'focus') {
       const focusTargetId = this.squadCommand.targetId;
       const target = this.units.find((unit) => unit.id === focusTargetId && unit.alive);
@@ -999,9 +1140,9 @@ export class ArenaScene extends Phaser.Scene {
           this.tacticalLayer.lineBetween(ally.x, ally.y, target.x, target.y);
         }
       }
-      this.commandText.setText(`F FOCUS ACTIVE ${remaining}s    Q RALLY CURSOR`);
+      this.commandText.setText(`F FOCUS ACTIVE ${remaining}s    Q RALLY CURSOR\n${this.getLoadoutHint()}`);
     } else {
-      this.commandText.setText('Q RALLY CURSOR    F FOCUS VISIBLE TARGET');
+      this.commandText.setText(`Q RALLY CURSOR    F FOCUS VISIBLE TARGET\n${this.getLoadoutHint()}`);
     }
 
     for (const unit of this.units) {
@@ -1090,7 +1231,7 @@ export class ArenaScene extends Phaser.Scene {
     for (const enemy of enemies) {
       for (const target of blueUnits) {
         const distance = Phaser.Math.Distance.Between(enemy.x, enemy.y, target.x, target.y);
-        if (this.hasLineOfSight(enemy.x, enemy.y, target.x, target.y, RIFLE_RANGE)) {
+        if (this.hasLineOfSight(enemy.x, enemy.y, target.x, target.y, enemy.rifleRange)) {
           lanes.push({ enemy, target, distance });
         }
       }
@@ -1114,6 +1255,15 @@ export class ArenaScene extends Phaser.Scene {
       coverMoves: 0,
       exposureSeconds: 0,
     };
+  }
+
+  private getSelectedLoadout() {
+    return PLAYER_LOADOUTS.find((loadout) => loadout.id === this.selectedLoadoutId) ?? PLAYER_LOADOUTS[0];
+  }
+
+  private getLoadoutHint() {
+    const selected = this.getSelectedLoadout();
+    return `${PLAYER_LOADOUTS.map((loadout) => `${loadout.key} ${loadout.name}`).join('   ')}    SELECTED ${selected.name}: ${selected.note}`;
   }
 
   private drawHud() {
@@ -1147,14 +1297,14 @@ export class ArenaScene extends Phaser.Scene {
       const rifle = player.rifleCooldown <= 0 ? 'READY' : 'CYCLING';
       const blade = player.bladeCooldown <= 0 ? 'READY' : `${player.bladeCooldown.toFixed(1)}s`;
       const exposed = Math.round(this.roundStats.exposureSeconds);
-      this.playerText.setText(`LEAD HP ${hp}    SHIELD ${shield}%    DASH ${dash}    RIFLE ${rifle}    BLADE ${blade}    EXPOSED ${exposed}s`);
+      this.playerText.setText(`${player.loadoutName}    HP ${hp}    SHIELD ${shield}/${Math.round(player.maxShieldEnergy)}    DASH ${dash}    RIFLE ${rifle}    BLADE ${blade}    EXPOSED ${exposed}s`);
     }
 
     this.uiLayer.clear();
     if (player) {
       this.drawBar(24, WORLD_H - 54, 170, 6, player.hp / player.maxHp, 0x9ff6c7);
       this.drawBar(206, WORLD_H - 54, 120, 6, player.shieldEnergy / player.maxShieldEnergy, 0x46d7ff);
-      this.drawBar(338, WORLD_H - 54, 72, 6, player.dashCooldown <= 0 ? 1 : 1 - player.dashCooldown / 1.45, 0xffd36a);
+      this.drawBar(338, WORLD_H - 54, 72, 6, player.dashCooldown <= 0 ? 1 : 1 - player.dashCooldown / player.dashCooldownDuration, 0xffd36a);
     }
   }
 
@@ -1216,6 +1366,7 @@ export class ArenaScene extends Phaser.Scene {
     const message = redAlive ? 'DEFEAT' : 'VICTORY';
     const result = [
       message,
+      `LOADOUT ${this.getSelectedLoadout().name}`,
       `DAMAGE ${Math.round(this.roundStats.damageDealt)} / TAKEN ${Math.round(this.roundStats.damageTaken)}`,
       `RIFLE ${this.roundStats.rifleHits}/${this.roundStats.shotsFired} / CROSSFIRE ${this.roundStats.crossfireHits}`,
       `BLADE ${this.roundStats.bladeHits} / COMMANDS ${this.roundStats.commandsIssued} / COVER ${this.roundStats.coverMoves}`,

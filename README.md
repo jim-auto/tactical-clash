@@ -62,6 +62,7 @@ tactical-clash/
 - **Shield:** reduces frontal damage while draining energy and slowing movement.
 - **Dash:** short reposition tool with cooldown; disabled while shielding.
 - **Blade:** close burst damage for finishing or punishing overextension.
+- **Loadouts:** `1-4` restart the round with a distinct lead-unit build: balanced, scout, shield anchor, or close assault.
 - **Squad Commands:** `Q` sends allies to a cursor rally point; `F` marks a visible enemy for focus and flanking.
 - **Aim Preview:** the lead unit shows a rifle line so blocked lanes, clear lanes, and crossfire opportunities are readable before firing.
 - **Threat Lanes:** visible enemies draw hostile sight lines against exposed friendly units.
@@ -104,6 +105,13 @@ This keeps iteration fast. If the game grows, combat, sensing, and movement can 
 - Fog-of-war is team-based: any friendly unit can reveal an opposing unit for the player.
 - Hostile threat lanes only draw from visible enemies, so hidden enemies do not leak perfect information.
 
+## Lead Loadouts
+
+- `1` **Vanguard:** balanced rifle, shield, movement, and blade.
+- `2` **Scout:** wider vision and faster dash, weaker shield and close damage.
+- `3` **Bulwark:** stronger shield and sustain, slower movement and weapon cycle.
+- `4` **Striker:** close assault blade and fast movement, shorter rifle range.
+
 ## Simple AI Design
 
 - Opponents patrol until they see a target.
@@ -142,6 +150,7 @@ Controls:
 - Shield: right mouse or `Shift`
 - Dash: `Space`
 - Blade: `E`
+- Select loadout and restart: `1 2 3 4`
 - Rally squad: `Q` at cursor
 - Focus fire: `F` on visible enemy
 - Restart round: `R`
