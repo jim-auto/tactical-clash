@@ -19,6 +19,30 @@ const COMMAND_DURATION = 9000;
 const FOCUS_DURATION = 6500;
 const COVER_POINT_OFFSET = 34;
 
+const HELP_TEXT = [
+  '【目的】',
+  '青4 vs 赤4。敵を全滅させれば勝利。リーダー1人を操作し、味方3人はAI。',
+  '',
+  '【基本操作】',
+  'WASD … 移動    マウス … 照準    左クリック … ライフル',
+  'Shift / 右クリック … シールド    Space … ダッシュ    E … 近接    R … 再スタート',
+  '',
+  '【チーム命令】',
+  'Q … 味方をカーソル位置へ集合',
+  'F … 見えている敵に集中攻撃（挟撃）',
+  '',
+  '【ロードアウト】',
+  '1 Vanguard … バランス    2 Scout … 視界・機動',
+  '3 Bulwark … 耐久    4 Striker … 近接',
+  '',
+  '【画面の見方】',
+  '灰色の箱 … 遮蔽物（弾・視界を遮る）',
+  '敵は見えないと非表示（フォグ・オブ・ウォー）',
+  '右上 … ミニマップ    緑い照準線 … 挟撃ボーナス    赤い線 … 敵の照準',
+  '',
+  'まず WASD で動き、敵を見つけたら左クリック。Q で前進、F で集中攻撃。',
+].join('\n');
+
 type PlayerLoadoutId = 'vanguard' | 'scout' | 'bulwark' | 'striker';
 
 interface PlayerLoadout {
@@ -169,7 +193,7 @@ const PLAYER_LOADOUTS: PlayerLoadout[] = [
   },
 ];
 
-type KeySet = Record<'W' | 'A' | 'S' | 'D' | 'SPACE' | 'SHIFT' | 'E' | 'Q' | 'F' | 'R' | 'ONE' | 'TWO' | 'THREE' | 'FOUR', Phaser.Input.Keyboard.Key>;
+type KeySet = Record<'W' | 'A' | 'S' | 'D' | 'SPACE' | 'SHIFT' | 'E' | 'Q' | 'F' | 'R' | 'ONE' | 'TWO' | 'THREE' | 'FOUR' | 'H' | 'ENTER' | 'ESC', Phaser.Input.Keyboard.Key>;
 
 type SquadCommand =
   | {
@@ -227,6 +251,10 @@ export class ArenaScene extends Phaser.Scene {
   private squadCommand?: SquadCommand;
   private roundStats: RoundStats = this.createRoundStats();
   private selectedLoadoutId: PlayerLoadoutId = 'vanguard';
+  private helpOverlay?: Phaser.GameObjects.Container;
+  private helpVisible = false;
+  private helpDismissedSession = false;
+  private helpPointerJustDown = false;
 
   constructor() {
     super('ArenaScene');
@@ -234,7 +262,10 @@ export class ArenaScene extends Phaser.Scene {
 
   create() {
     this.input.mouse?.disableContextMenu();
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SPACE,SHIFT,E,Q,F,R,ONE,TWO,THREE,FOUR') as KeySet;
+    this.input.on('pointerdown', () => {
+      this.helpPointerJustDown = true;
+    });
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SPACE,SHIFT,E,Q,F,R,ONE,TWO,THREE,FOUR,H,ENTER,ESC') as KeySet;
 
     this.ground = this.add.graphics().setDepth(0);
     this.visionLayer = this.add.graphics().setDepth(1);
@@ -266,11 +297,22 @@ export class ArenaScene extends Phaser.Scene {
       color: COLORS.muted,
     }).setDepth(10);
 
+    this.createHelpOverlay();
     this.resetRound();
   }
 
   update(_: number, deltaMs: number) {
     const dt = Math.min(deltaMs / 1000, 0.033);
+
+    if (this.handleHelpInput()) {
+      this.drawVision();
+      this.drawIntel();
+      this.drawTacticalOverlay();
+      this.drawHud();
+      this.drawMinimap();
+      return;
+    }
+
     this.elapsedMs += deltaMs;
 
     if (this.handleLoadoutHotkeys()) {
@@ -312,6 +354,10 @@ export class ArenaScene extends Phaser.Scene {
     this.roundStats = this.createRoundStats();
     this.resultText?.destroy();
     this.resultText = undefined;
+
+    if (!this.helpDismissedSession) {
+      this.setHelpVisible(true);
+    }
 
     this.drawGround();
     this.drawCover();
@@ -1142,7 +1188,7 @@ export class ArenaScene extends Phaser.Scene {
       }
       this.commandText.setText(`F FOCUS ACTIVE ${remaining}s    Q RALLY CURSOR\n${this.getLoadoutHint()}`);
     } else {
-      this.commandText.setText(`Q RALLY CURSOR    F FOCUS VISIBLE TARGET\n${this.getLoadoutHint()}`);
+      this.commandText.setText(`Q RALLY CURSOR    F FOCUS VISIBLE TARGET    H HELP\n${this.getLoadoutHint()}`);
     }
 
     for (const unit of this.units) {
@@ -1264,6 +1310,73 @@ export class ArenaScene extends Phaser.Scene {
   private getLoadoutHint() {
     const selected = this.getSelectedLoadout();
     return `${PLAYER_LOADOUTS.map((loadout) => `${loadout.key} ${loadout.name}`).join('   ')}    SELECTED ${selected.name}: ${selected.note}`;
+  }
+
+  private createHelpOverlay() {
+    const panelW = 760;
+    const panelH = 520;
+    const panelX = WORLD_W / 2;
+    const panelY = WORLD_H / 2;
+    const panelLeft = panelX - panelW / 2;
+    const panelTop = panelY - panelH / 2;
+
+    const container = this.add.container(0, 0).setDepth(20).setVisible(false);
+
+    const backdrop = this.add.rectangle(WORLD_W / 2, WORLD_H / 2, WORLD_W, WORLD_H, 0x02080c, 0.78);
+    const panel = this.add.graphics();
+    panel.fillStyle(0x061216, 0.96);
+    panel.fillRoundedRect(panelLeft, panelTop, panelW, panelH, 10);
+    panel.lineStyle(2, COLORS.blue, 0.42);
+    panel.strokeRoundedRect(panelLeft + 0.5, panelTop + 0.5, panelW - 1, panelH - 1, 10);
+
+    const title = this.add.text(panelX, panelTop + 28, '操作方法', {
+      fontFamily: 'Inter, Arial, sans-serif',
+      fontSize: '22px',
+      color: COLORS.good,
+    }).setOrigin(0.5);
+
+    const body = this.add.text(panelLeft + 32, panelTop + 62, HELP_TEXT, {
+      fontFamily: 'Inter, Arial, sans-serif',
+      fontSize: '13px',
+      color: COLORS.text,
+      lineSpacing: 6,
+      wordWrap: { width: panelW - 64 },
+    });
+
+    const footer = this.add.text(panelX, panelTop + panelH - 24, 'H または Enter / クリックで閉じる', {
+      fontFamily: 'Inter, Arial, sans-serif',
+      fontSize: '12px',
+      color: COLORS.muted,
+    }).setOrigin(0.5);
+
+    container.add([backdrop, panel, title, body, footer]);
+    this.helpOverlay = container;
+  }
+
+  private setHelpVisible(visible: boolean) {
+    this.helpVisible = visible;
+    this.helpOverlay?.setVisible(visible);
+    if (!visible) {
+      this.helpDismissedSession = true;
+    }
+  }
+
+  private handleHelpInput() {
+    const toggleHelp = Phaser.Input.Keyboard.JustDown(this.keys.H);
+    const closeHelp = Phaser.Input.Keyboard.JustDown(this.keys.ENTER) || Phaser.Input.Keyboard.JustDown(this.keys.ESC);
+    const clickClose = this.helpVisible && this.helpPointerJustDown;
+    this.helpPointerJustDown = false;
+
+    if (toggleHelp) {
+      this.setHelpVisible(!this.helpVisible);
+      return this.helpVisible;
+    }
+
+    if (this.helpVisible && (closeHelp || clickClose)) {
+      this.setHelpVisible(false);
+    }
+
+    return this.helpVisible;
   }
 
   private drawHud() {
